@@ -9,3 +9,35 @@ controller_templates:
     ask_limit_on_launch: true
     credentials:
       - "{{ default_machine_credential }}"
+    survey_enabled: true
+    survey_spec:
+      name: "CBOM Generation Survey"
+      description: "Configure variables for generating and collecting a PQC CBOM"
+      spec:
+        - question_name: "AAP Server?"
+          question_description: "Enter the FQDN for the AAP server"
+          variable: "aap_server"
+          type: "text"
+          default: "{{ auth_server_fqdn }}"
+          required: true
+
+        - question_name: "NFS Server?"
+          question_description: "Enter the endpoint for where you are uploading the generated files"
+          variable: "nfs_server"
+          type: "text"
+          default: "{{ nfs_server }}"
+          required: true
+
+        - question_name: "NFS Upload folder?"
+          question_description: "Enter the location you want to upload your files"
+          variable: "nfs_upload_folder"
+          type: "text"
+          default: "{{ nfs_upload_folder }}"
+          required: true
+
+        - question_name: "NFS folder user?"
+          question_description: "Enter the owner of the NFS folder"
+          variable: "nfs_user"
+          type: "text"
+          default: "{{ nfs_user }}"
+          required: true
