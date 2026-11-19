@@ -18,7 +18,7 @@ controller_templates:
           question_description: "Enter the FQDN for the AAP server"
           variable: "aap_server"
           type: "text"
-          default: "{{ auth_server_fqdn }}"
+          default: "{{ aap_server }}"
           required: true
 
         - question_name: "NFS Server?"
