@@ -1,6 +1,6 @@
 ---
 # defaults file for cbom_audit
-cbom_audit_local_report_dir: "./cbom_reports"
+cbom_audit_local_report_dir: "cbom_reports"
 cbom_audit_remote_work_dir: "/tmp/cbom_audit_{{ ansible_date_time.epoch }}"
 
 # Directories scanned for certificates, keys, and keystores
