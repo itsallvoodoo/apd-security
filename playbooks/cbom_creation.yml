@@ -1,0 +1,8 @@
+---
+- name: Generate Cryptographic Bill of Materials (CBOM) & PQC Risk Report
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: cbom_audit

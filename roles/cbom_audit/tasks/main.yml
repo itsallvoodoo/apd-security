@@ -1,0 +1,74 @@
+---
+- name: Verify target OS is RHEL 9 family
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == "RedHat"
+      - ansible_distribution_major_version == "9"
+    fail_msg: >-
+      This role is designed for RHEL 9
+      (detected {{ ansible_distribution }} {{ ansible_distribution_version }}).
+
+- name: Ensure local report directory exists on control node
+  ansible.builtin.file:
+    path: "{{ cbom_audit_local_report_dir }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Execute CBOM scan and guarantee temporary directory cleanup
+  block:
+    - name: Create temporary working directory on managed node
+      ansible.builtin.file:
+        path: "{{ cbom_audit_remote_work_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Copy CBOM scanner script to managed node
+      ansible.builtin.copy:
+        src: cbom_scanner.py
+        dest: "{{ cbom_audit_remote_work_dir }}/cbom_scanner.py"
+        mode: "0700"
+
+    - name: Run CBOM & PQC scanner on target host
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - "{{ cbom_audit_remote_work_dir }}/cbom_scanner.py"
+          - "{{ cbom_audit_payload | to_json }}"
+      vars:
+        cbom_audit_payload:
+          pki_paths: "{{ cbom_audit_pki_search_paths }}"
+          exclude_paths: "{{ cbom_audit_exclude_paths }}"
+          web_conf_dirs: "{{ cbom_audit_web_conf_dirs }}"
+          out_json: "{{ cbom_audit_remote_work_dir }}/cbom_{{ inventory_hostname }}.json"
+          out_md: "{{ cbom_audit_remote_work_dir }}/cbom_report_{{ inventory_hostname }}.md"
+      register: cbom_audit_scan_output
+      changed_when: false
+
+    - name: Fetch JSON CBOM to Ansible control node
+      ansible.builtin.fetch:
+        src: "{{ cbom_audit_remote_work_dir }}/cbom_{{ inventory_hostname }}.json"
+        dest: "{{ cbom_audit_local_report_dir }}/cbom_{{ inventory_hostname }}.json"
+        flat: true
+
+    - name: Fetch Markdown PQC Risk Report to Ansible control node
+      ansible.builtin.fetch:
+        src: "{{ cbom_audit_remote_work_dir }}/cbom_report_{{ inventory_hostname }}.md"
+        dest: "{{ cbom_audit_local_report_dir }}/cbom_report_{{ inventory_hostname }}.md"
+        flat: true
+
+    - name: Display PQC risk summary per host
+      ansible.builtin.debug:
+        msg: >-
+          CBOM saved to {{ cbom_audit_local_report_dir }}/cbom_report_{{ inventory_hostname }}.md |
+          Risk counts: {{ cbom_audit_scan_output.stdout }}
+
+  always:
+    - name: Remove temporary working directory on managed node
+      ansible.builtin.file:
+        path: "{{ cbom_audit_remote_work_dir }}"
+        state: absent
+
+...

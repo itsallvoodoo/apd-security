@@ -1,0 +1,11 @@
+---
+controller_templates:
+  - name: "PQC | CBOM | Generate Cryptographic Bill of Materials"
+    description: "Identify algorithms used on a linux server"
+    playbook: "playbooks/cbom_creation.yml"
+    project: "{{ aap_project }}"
+    execution_environment: "APD Security EE"
+    inventory: "{{ aap_inventory }}"
+    ask_limit_on_launch: true
+    credentials:
+      - "{{ default_machine_credential }}"

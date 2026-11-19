@@ -1,0 +1,9 @@
+---
+controller_projects:
+  - name: "APD Security"
+    organization: "{{ aap_organization }}"
+    scm_type: git
+    scm_url: "{{ scm_repository }}"
+    scm_branch: "main"
+    scm_clean: true
+...
