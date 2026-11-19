@@ -8,14 +8,21 @@
       This role is designed for RHEL 9
       (detected {{ ansible_distribution }} {{ ansible_distribution_version }}).
 
-- name: Ensure local report directory exists on control node
-  ansible.builtin.file:
-    path: "{{ cbom_audit_local_report_dir }}"
+- name: Create temporary directory in EE for local results
+  ansible.builtin.tempfile:
     state: directory
-    mode: "0750"
+    prefix: "{{ cbom_audit_local_report_dir }}"
   delegate_to: localhost
   become: false
-  run_once: true
+  register: ee_temp_dir
+
+- name: Ensure host directory exists in EE temp folder
+  ansible.builtin.file:
+    path: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}"
+    state: directory
+    mode: '0700'
+  delegate_to: localhost
+  become: false
 
 - name: Execute CBOM scan and guarantee temporary directory cleanup
   block:
@@ -47,22 +54,21 @@
       register: cbom_audit_scan_output
       changed_when: false
 
-    - name: Fetch JSON CBOM to Ansible control node
+    - name: Copy JSON CBOM back to the EE
       ansible.builtin.fetch:
         src: "{{ cbom_audit_remote_work_dir }}/cbom_{{ inventory_hostname }}.json"
-        dest: "{{ cbom_audit_local_report_dir }}/cbom_{{ inventory_hostname }}.json"
+        dest: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/cbom_{{ inventory_hostname }}.json"
         flat: true
 
-    - name: Fetch Markdown PQC Risk Report to Ansible control node
+    - name: Copy Markdown PQC Risk Report back to the EE
       ansible.builtin.fetch:
         src: "{{ cbom_audit_remote_work_dir }}/cbom_report_{{ inventory_hostname }}.md"
-        dest: "{{ cbom_audit_local_report_dir }}/cbom_report_{{ inventory_hostname }}.md"
+        dest: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/cbom_report_{{ inventory_hostname }}.md"
         flat: true
 
     - name: Display PQC risk summary per host
       ansible.builtin.debug:
         msg: >-
-          CBOM saved to {{ cbom_audit_local_report_dir }}/cbom_report_{{ inventory_hostname }}.md |
           Risk counts: {{ cbom_audit_scan_output.stdout }}
 
   always:
@@ -70,5 +76,45 @@
       ansible.builtin.file:
         path: "{{ cbom_audit_remote_work_dir }}"
         state: absent
+
+# Perhaps move the following to a new export role
+
+- name: Find files previously fetched to the EE
+  ansible.builtin.find:
+    paths: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/"
+    patterns:
+      - "*.json"
+      - "*.md"
+    recurse: false
+  register: ee_files
+  delegate_to: localhost
+  become: false
+
+- name: NFS Upload Functions
+  delegate_to: "{{ nfs_server }}"
+  vars:
+    ansible_remote_tmp: /tmp
+  block:
+
+    - name: Ensure that storage path exists on NFS
+      ansible.builtin.file:
+        path: "{{ nfs_upload_folder }}/{{ inventory_hostname }}"
+        state: directory
+        owner: "{{ nfs_user }}"
+        group: "{{ nfs_user }}"
+        mode: '0750'
+      become: true
+
+    - name: Push CKLs to NFS Server
+      ansible.builtin.copy:
+        src: "{{ item.path }}" 
+        dest: '{{ nfs_upload_folder }}/{{ inventory_hostname }}/{{ item.path | win_basename }}'
+        owner: "{{ nfs_user }}"
+        group: "{{ nfs_user }}"
+        mode: '0640'
+      loop: "{{ ee_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      become: true
 
 ...
