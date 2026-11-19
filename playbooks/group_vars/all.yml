@@ -6,7 +6,7 @@ aap_project: "APD Security"
 default_machine_credential: "APD Machine Credential"
 
 # SCM Variables
-scm_repository: "https://github.com/itsallvoodoo/apd_security"
+scm_repository: "https://github.com/itsallvoodoo/apd-security"
 
 # Execution Environment Variables
 ee_image: "quay.io/chobbs-sa/spear_ee:latest"
