@@ -3,6 +3,7 @@
 aap_organization: "Ansible Product Demos (APD)"
 aap_server: aap.example.com
 aap_project: "APD Security"
+aap_inventory: "Ansible Product Demos Inventory"
 default_machine_credential: "APD Machine Credential"
 
 # SCM Variables
