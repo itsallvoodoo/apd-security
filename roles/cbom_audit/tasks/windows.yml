@@ -38,6 +38,12 @@
       register: cbom_audit_win_output
       changed_when: false
 
+    - name: Copy Markdown PQC Risk Report back to the EE
+      ansible.builtin.fetch:
+        src: "{{ cbom_audit_win_remote_work_dir }}/cbom_report_{{ inventory_hostname }}.md"
+        dest: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/cbom_report_{{ inventory_hostname }}.md"
+        flat: true
+
     - name: Find files previously fetched to the EE
       ansible.builtin.find:
         paths: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/"

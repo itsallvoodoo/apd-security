@@ -21,4 +21,7 @@
     msg: "Unsupported OS family '{{ ansible_os_family }}' on {{ inventory_hostname }}."
   when: ansible_os_family not in ["RedHat", "Windows"]
 
+
+
+
 ...
