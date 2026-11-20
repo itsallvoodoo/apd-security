@@ -15,4 +15,4 @@ ee_image: "quay.io/chobbs-sa/spear_ee:latest"
 # NFS Variables
 nfs_server: aap.example.com
 nfs_upload_folder: /tmp
-nfs_user: ansible
+nfs_user: ec2-user

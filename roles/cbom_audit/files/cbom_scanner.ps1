@@ -102,8 +102,8 @@ function Get-WindowsTlsSuites {
         }
     }
     return @{
-        active_cipher_suites         = $suites
-        pqc_kem_algorithms_available = $pqcSuites
+        active_cipher_suites         = @($suites)
+        pqc_kem_algorithms_available = @($pqcSuites)
     }
 }
 
@@ -127,6 +127,35 @@ function Get-HttpSslBindings {
     return $bindings
 }
 
+function Get-CertPublicKeyAlgorithm {
+    param([System.Security.Cryptography.X509Certificates.X509Certificate2]$Cert)
+
+    $oidName = $Cert.PublicKey.Oid.FriendlyName
+    if ($oidName -match "RSA") {
+        try {
+            $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($Cert)
+            if ($rsa) { return "RSA-$($rsa.KeySize)" }
+        } catch {}
+        if ($Cert.PublicKey.Key) { return "RSA-$($Cert.PublicKey.Key.KeySize)" }
+        return "RSA"
+    }
+
+    if ($oidName -match "ECC|ECDSA") {
+        try {
+            $ecdsa = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPublicKey($Cert)
+            if ($ecdsa) {
+                $curve = $ecdsa.ExportParameters($false).Curve.Oid.FriendlyName
+                if (-not $curve) { $curve = "$($ecdsa.KeySize)-bit" }
+                return "ECDSA-$curve"
+            }
+        } catch {}
+        if ($Cert.PublicKey.Key) { return "ECDSA-$($Cert.PublicKey.Key.KeySize)" }
+        return "ECDSA"
+    }
+
+    return $oidName
+}
+
 function Get-StoreCertificates {
     param([string[]]$Stores, [hashtable]$Bindings)
 
@@ -135,23 +164,7 @@ function Get-StoreCertificates {
         if (-not (Test-Path $storePath)) { continue }
         $certs = Get-ChildItem -Path $storePath
         foreach ($c in $certs) {
-            $oidName = $c.PublicKey.Oid.FriendlyName
-            $pubAlgo = $oidName
-
-            if ($oidName -match "RSA") {
-                $bits = $c.PublicKey.Key.KeySize
-                $pubAlgo = "RSA-$bits"
-            } elseif ($oidName -match "ECC|ECDSA") {
-                try {
-                    $ecdsa = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPublicKey($c)
-                    $curve = $ecdsa.ExportParameters($false).Curve.Oid.FriendlyName
-                    if (-not $curve) { $curve = "$($ecdsa.KeySize)-bit" }
-                    $pubAlgo = "ECDSA-$curve"
-                } catch {
-                    $pubAlgo = "ECDSA-$($c.PublicKey.Key.KeySize)"
-                }
-            }
-
+            $pubAlgo = Get-CertPublicKeyAlgorithm -Cert $c
             $sigAlgo = $c.SignatureAlgorithm.FriendlyName
             $class = Classify-PqcRisk -AlgoStr "$pubAlgo $sigAlgo" -Context "asymmetric"
             $thumb = $c.Thumbprint.ToUpper()
@@ -179,7 +192,9 @@ function Get-FileAssets {
     $exts = @(".pfx", ".p12", ".cer", ".crt", ".pem", ".key")
     foreach ($base in $Paths) {
         if (-not (Test-Path $base)) { continue }
-        $files = Get-ChildItem -Path $base -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $exts -contains $_.Extension.ToLower() }
+        $files = Get-ChildItem -Path $base -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            ($exts -contains $_.Extension.ToLower()) -and ($_.FullName -notlike "C:\ProgramData\Microsoft\*")
+        }
         foreach ($f in $files) {
             $ext = $f.Extension.ToLower()
             if ($ext -in @(".pfx", ".p12")) {
@@ -193,11 +208,21 @@ function Get-FileAssets {
                     pqc_risk            = "INFO"
                     pqc_notes           = "Password-protected PKCS#12 container; inspect certificate contents manually."
                 }
+            } elseif ($ext -eq ".key") {
+                $assets += @{
+                    path                = $f.FullName
+                    type                = "Private Key File"
+                    algorithm           = "PEM/DER Private Key"
+                    signature_algorithm = "N/A"
+                    subject             = "N/A"
+                    expires             = "N/A"
+                    pqc_risk            = "INFO"
+                    pqc_notes           = "Standalone private key file on disk; verify paired certificate algorithm."
+                }
             } elseif ($ext -in @(".cer", ".crt", ".pem")) {
                 try {
                     $x509 = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($f.FullName)
-                    $oid = $x509.PublicKey.Oid.FriendlyName
-                    $algo = if ($oid -match "RSA") { "RSA-$($x509.PublicKey.Key.KeySize)" } else { $oid }
+                    $algo = Get-CertPublicKeyAlgorithm -Cert $x509
                     $sig = $x509.SignatureAlgorithm.FriendlyName
                     $class = Classify-PqcRisk -AlgoStr "$algo $sig" -Context "asymmetric"
                     $assets += @{
@@ -257,11 +282,11 @@ function Get-WindowsOpenSshAudit {
     $hostClass = Classify-PqcRisk -AlgoStr ($hostAlgos -join ",") -Context "asymmetric"
     return @{
         status                  = "active"
-        kex_algorithms          = $kex
+        kex_algorithms          = @($kex)
         hybrid_pqc_kex_present  = @($hybrid)
         kex_pqc_risk            = $kexRisk
         kex_notes               = $kexNote
-        host_key_algorithms     = $hostAlgos
+        host_key_algorithms     = @($hostAlgos)
         host_key_pqc_risk       = $hostClass.Risk
         host_key_notes          = $hostClass.Note
     }
@@ -280,7 +305,7 @@ $assets += Get-StoreCertificates -Stores $cfg.cert_stores -Bindings $bindings
 $assets += Get-FileAssets -Paths $cfg.file_search_paths
 
 $severityOrder = @{ "CRITICAL" = 0; "HIGH" = 1; "MEDIUM" = 2; "LOW" = 3; "INFO" = 4; "QUANTUM-SAFE" = 5 }
-$assets = $assets | Sort-Object { $severityOrder[$_.pqc_risk] }
+$assets = @($assets | Sort-Object { $severityOrder[$_.pqc_risk] })
 
 $counts = @{ "CRITICAL" = 0; "HIGH" = 0; "MEDIUM" = 0; "LOW" = 0; "INFO" = 0; "QUANTUM-SAFE" = 0 }
 foreach ($a in $assets) {
@@ -300,7 +325,7 @@ $cbom = @{
     system_crypto_policy    = $schannel
     libraries_and_providers = $tlsSuites
     ssh_configuration       = $sshAudit
-    cryptographic_assets    = $assets
+    cryptographic_assets    = @($assets)
 }
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -317,7 +342,7 @@ $md = @(
     "# Cryptographic Bill of Materials (CBOM) & PQC Risk Report",
     "- **Host:** ``$hostname``",
     "- **Generated (UTC):** ``$timestamp``",
-    "- **OS / SChannel Policy:** ``$($schannel.current)`` (**$($schannel.pqc_risk)** — $($schannel.notes))",
+    "- **OS / SChannel Policy:** ``$($schannel.current)`` (**$($schannel.pqc_risk)** -- $($schannel.notes))",
     "- **Available PQC TLS KEMs:** ``$pqcKemStr``",
     "",
     "## 1. PQC Risk Summary",
@@ -332,7 +357,7 @@ $md = @(
     "",
     "## 2. Windows OpenSSH Server",
     $(if ($sshAudit.status -eq "active") {
-        "- **Key Exchange PQC Risk:** ``$($sshAudit.kex_pqc_risk)`` — $($sshAudit.kex_notes)`n- **Host Key PQC Risk:** ``$($sshAudit.host_key_pqc_risk)`` — $($sshAudit.host_key_notes)"
+        "- **Key Exchange PQC Risk:** ``$($sshAudit.kex_pqc_risk)`` -- $($sshAudit.kex_notes)`n- **Host Key PQC Risk:** ``$($sshAudit.host_key_pqc_risk)`` -- $($sshAudit.host_key_notes)"
     } else {
         "- Windows OpenSSH Server status: ``$($sshAudit.status)``."
     }),
