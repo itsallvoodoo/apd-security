@@ -1,0 +1,83 @@
+---
+- name: Verify target is Windows 11 or Windows Server 2019+
+  ansible.builtin.assert:
+    that:
+      - (ansible_distribution_version.split('.')[2] | int) >= 17763
+    fail_msg: >-
+      Expected Windows 11 or Windows Server 2019+ (build 17763+),
+      detected {{ ansible_distribution }} ({{ ansible_distribution_version }}).
+
+- name: Execute Windows CBOM scan and guarantee cleanup
+  block:
+    - name: Create temporary working directory on Windows target
+      ansible.windows.win_file:
+        path: "{{ cbom_audit_win_remote_work_dir }}"
+        state: directory
+
+    - name: Copy PowerShell CBOM scanner script
+      ansible.windows.win_copy:
+        src: cbom_scanner.ps1
+        dest: '{{ cbom_audit_win_remote_work_dir }}\cbom_scanner.ps1'
+
+    - name: Write scanner configuration JSON on Windows target
+      ansible.windows.win_copy:
+        content: "{{ cbom_audit_win_payload | to_nice_json }}"
+        dest: '{{ cbom_audit_win_remote_work_dir }}\config.json'
+      vars:
+        cbom_audit_win_payload:
+          cert_stores: "{{ cbom_audit_win_cert_stores }}"
+          file_search_paths: "{{ cbom_audit_win_file_search_paths }}"
+          out_json: '{{ cbom_audit_win_remote_work_dir }}\cbom_{{ inventory_hostname }}.json'
+          out_md: '{{ cbom_audit_win_remote_work_dir }}\cbom_report_{{ inventory_hostname }}.md'
+
+    - name: Run CBOM & PQC scanner on Windows target
+      ansible.windows.win_shell: >
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+        -File "{{ cbom_audit_win_remote_work_dir }}\cbom_scanner.ps1"
+        -ConfigPath "{{ cbom_audit_win_remote_work_dir }}\config.json"
+      register: cbom_audit_win_output
+      changed_when: false
+
+    - name: Find files previously fetched to the EE
+      ansible.builtin.find:
+        paths: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/"
+        patterns:
+          - "*.json"
+          - "*.md"
+        recurse: false
+      register: ee_files
+      delegate_to: localhost
+      become: false
+
+    - name: NFS Upload Functions
+      delegate_to: "{{ nfs_server }}"
+      vars:
+        ansible_remote_tmp: /tmp
+      block:
+        - name: Ensure that storage path exists on NFS
+          ansible.builtin.file:
+            path: "{{ nfs_upload_folder }}/{{ inventory_hostname }}"
+            state: directory
+            owner: "{{ nfs_user }}"
+            group: "{{ nfs_user }}"
+            mode: '0750'
+          become: true
+
+        - name: Push files to NFS Server
+          ansible.builtin.copy:
+            src: "{{ item.path }}" 
+            dest: '{{ nfs_upload_folder }}/{{ inventory_hostname }}/{{ item.path | win_basename }}'
+            owner: "{{ nfs_user }}"
+            group: "{{ nfs_user }}"
+            mode: '0640'
+          loop: "{{ ee_files.files }}"
+          loop_control:
+            label: "{{ item.path | basename }}"
+          become: true
+
+  always:
+    - name: Remove temporary working directory on Windows target
+      ansible.windows.win_file:
+        path: "{{ cbom_audit_win_remote_work_dir }}"
+        state: absent
+...

@@ -1,12 +1,4 @@
 ---
-- name: Verify target OS is RHEL 9 family
-  ansible.builtin.assert:
-    that:
-      - ansible_os_family == "RedHat"
-      - ansible_distribution_major_version == "9"
-    fail_msg: >-
-      This role is designed for RHEL 9
-      (detected {{ ansible_distribution }} {{ ansible_distribution_version }}).
 
 - name: Create temporary directory in EE for local results
   ansible.builtin.tempfile:
@@ -16,105 +8,17 @@
   become: false
   register: ee_temp_dir
 
-- name: Ensure host directory exists in EE temp folder
-  ansible.builtin.file:
-    path: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}"
-    state: directory
-    mode: '0700'
-  delegate_to: localhost
-  become: false
+- name: Run RHEL 9 CBOM audit
+  ansible.builtin.include_tasks: redhat.yml
+  when: ansible_os_family == "RedHat"
 
-- name: Execute CBOM scan and guarantee temporary directory cleanup
-  block:
-    - name: Create temporary working directory on managed node
-      ansible.builtin.file:
-        path: "{{ cbom_audit_remote_work_dir }}"
-        state: directory
-        mode: "0700"
+- name: Run Windows CBOM audit
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == "Windows"
 
-    - name: Copy CBOM scanner script to managed node
-      ansible.builtin.copy:
-        src: cbom_scanner.py
-        dest: "{{ cbom_audit_remote_work_dir }}/cbom_scanner.py"
-        mode: "0700"
-
-    - name: Run CBOM & PQC scanner on target host
-      ansible.builtin.command:
-        argv:
-          - /usr/bin/python3
-          - "{{ cbom_audit_remote_work_dir }}/cbom_scanner.py"
-          - "{{ cbom_audit_payload | to_json }}"
-      vars:
-        cbom_audit_payload:
-          pki_paths: "{{ cbom_audit_pki_search_paths }}"
-          exclude_paths: "{{ cbom_audit_exclude_paths }}"
-          web_conf_dirs: "{{ cbom_audit_web_conf_dirs }}"
-          out_json: "{{ cbom_audit_remote_work_dir }}/cbom_{{ inventory_hostname }}.json"
-          out_md: "{{ cbom_audit_remote_work_dir }}/cbom_report_{{ inventory_hostname }}.md"
-      register: cbom_audit_scan_output
-      changed_when: false
-
-    - name: Copy JSON CBOM back to the EE
-      ansible.builtin.fetch:
-        src: "{{ cbom_audit_remote_work_dir }}/cbom_{{ inventory_hostname }}.json"
-        dest: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/cbom_{{ inventory_hostname }}.json"
-        flat: true
-
-    - name: Copy Markdown PQC Risk Report back to the EE
-      ansible.builtin.fetch:
-        src: "{{ cbom_audit_remote_work_dir }}/cbom_report_{{ inventory_hostname }}.md"
-        dest: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/cbom_report_{{ inventory_hostname }}.md"
-        flat: true
-
-    - name: Display PQC risk summary per host
-      ansible.builtin.debug:
-        msg: >-
-          Risk counts: {{ cbom_audit_scan_output.stdout }}
-
-  always:
-    - name: Remove temporary working directory on managed node
-      ansible.builtin.file:
-        path: "{{ cbom_audit_remote_work_dir }}"
-        state: absent
-
-# Perhaps move the following to a new export role
-
-- name: Find files previously fetched to the EE
-  ansible.builtin.find:
-    paths: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/"
-    patterns:
-      - "*.json"
-      - "*.md"
-    recurse: false
-  register: ee_files
-  delegate_to: localhost
-  become: false
-
-- name: NFS Upload Functions
-  delegate_to: "{{ nfs_server }}"
-  vars:
-    ansible_remote_tmp: /tmp
-  block:
-
-    - name: Ensure that storage path exists on NFS
-      ansible.builtin.file:
-        path: "{{ nfs_upload_folder }}/{{ inventory_hostname }}"
-        state: directory
-        owner: "{{ nfs_user }}"
-        group: "{{ nfs_user }}"
-        mode: '0750'
-      become: true
-
-    - name: Push CKLs to NFS Server
-      ansible.builtin.copy:
-        src: "{{ item.path }}" 
-        dest: '{{ nfs_upload_folder }}/{{ inventory_hostname }}/{{ item.path | win_basename }}'
-        owner: "{{ nfs_user }}"
-        group: "{{ nfs_user }}"
-        mode: '0640'
-      loop: "{{ ee_files.files }}"
-      loop_control:
-        label: "{{ item.path | basename }}"
-      become: true
+- name: Fail on unsupported operating system family
+  ansible.builtin.fail:
+    msg: "Unsupported OS family '{{ ansible_os_family }}' on {{ inventory_hostname }}."
+  when: ansible_os_family not in ["RedHat", "Windows"]
 
 ...

@@ -1,9 +1,9 @@
 ---
 # defaults file for cbom_audit
 cbom_audit_local_report_dir: "cbom_reports"
-cbom_audit_remote_work_dir: "/tmp/cbom_audit_{{ ansible_date_time.epoch }}"
 
-# Directories scanned for certificates, keys, and keystores
+# Linux-specific defaults
+cbom_audit_remote_work_dir: "/tmp/cbom_audit_{{ ansible_date_time.epoch }}"
 cbom_audit_pki_search_paths:
   - /etc/pki
   - /etc/ssl
@@ -13,18 +13,25 @@ cbom_audit_pki_search_paths:
   - /etc/nginx
   - /etc/haproxy
   - /opt
-
-# System-wide root CA bundles excluded to prevent per-file noise
 cbom_audit_exclude_paths:
   - /etc/pki/ca-trust
   - /etc/pki/java
   - /etc/pki/tls/certs/ca-bundle.crt
   - /etc/pki/tls/certs/ca-bundle.trust.crt
-
-# Service configuration directories inspected for explicit TLS cipher/protocol directives
 cbom_audit_web_conf_dirs:
   - /etc/httpd
   - /etc/nginx
   - /etc/haproxy
   - /etc/postfix
   - /etc/dovecot
+
+# Windows-specific defaults
+cbom_audit_win_remote_work_dir: 'C:\Windows\Temp\cbom_audit_{{ ansible_date_time.epoch }}'
+cbom_audit_win_cert_stores:
+  - Cert:\LocalMachine\My
+  - Cert:\LocalMachine\WebHosting
+  - Cert:\LocalMachine\CA
+cbom_audit_win_file_search_paths:
+  - C:\inetpub
+  - C:\ProgramData
+  - C:\certs

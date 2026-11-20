@@ -1,0 +1,79 @@
+---
+- name: Verify target OS is RHEL 9 family
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution_major_version == "9"
+    fail_msg: "Expected RHEL 9, detected {{ ansible_distribution }} {{ ansible_distribution_version }}."
+
+- name: Execute Linux CBOM scan and guarantee cleanup
+  become: true
+  block:
+    - name: Create temporary working directory on RHEL target
+      ansible.builtin.file:
+        path: "{{ cbom_audit_remote_work_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Copy Python CBOM scanner script
+      ansible.builtin.copy:
+        src: cbom_scanner.py
+        dest: "{{ cbom_audit_remote_work_dir }}/cbom_scanner.py"
+        mode: "0700"
+
+    - name: Run CBOM & PQC scanner on RHEL target
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - "{{ cbom_audit_remote_work_dir }}/cbom_scanner.py"
+          - "{{ cbom_audit_payload | to_json }}"
+      vars:
+        cbom_audit_payload:
+          pki_paths: "{{ cbom_audit_pki_search_paths }}"
+          exclude_paths: "{{ cbom_audit_exclude_paths }}"
+          web_conf_dirs: "{{ cbom_audit_web_conf_dirs }}"
+          out_json: "{{ cbom_audit_remote_work_dir }}/cbom_{{ inventory_hostname }}.json"
+          out_md: "{{ cbom_audit_remote_work_dir }}/cbom_report_{{ inventory_hostname }}.md"
+      register: cbom_audit_rhel_output
+      changed_when: false
+
+# Perhaps move the following to a new export role
+
+- name: Find files previously fetched to the EE
+  ansible.builtin.find:
+    paths: "{{ ee_temp_dir.path }}/{{ inventory_hostname }}/"
+    patterns:
+      - "*.json"
+      - "*.md"
+    recurse: false
+  register: ee_files
+  delegate_to: localhost
+  become: false
+
+- name: NFS Upload Functions
+  delegate_to: "{{ nfs_server }}"
+  vars:
+    ansible_remote_tmp: /tmp
+  block:
+
+    - name: Ensure that storage path exists on NFS
+      ansible.builtin.file:
+        path: "{{ nfs_upload_folder }}/{{ inventory_hostname }}"
+        state: directory
+        owner: "{{ nfs_user }}"
+        group: "{{ nfs_user }}"
+        mode: '0750'
+      become: true
+
+    - name: Push files to NFS Server
+      ansible.builtin.copy:
+        src: "{{ item.path }}" 
+        dest: '{{ nfs_upload_folder }}/{{ inventory_hostname }}/{{ item.path | win_basename }}'
+        owner: "{{ nfs_user }}"
+        group: "{{ nfs_user }}"
+        mode: '0640'
+      loop: "{{ ee_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      become: true
+
+...
