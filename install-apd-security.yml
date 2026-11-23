@@ -1,17 +1,33 @@
 ---
 - name: Bootstrap AAP environment with security resources
   hosts: localhost
+  connection: local
   gather_facts: false
 
   vars_files:
     - playbooks/group_vars/all.yml
-  
+
   vars:
     controller_configs:
       - controller_config/projects.yml
       - controller_config/execution_environments.yml
       - controller_config/job_templates.yml
-      - controller_config/inventories.yml  
+      - controller_config/inventories.yml
+
+    # Connection details. Taken from extra vars when given, otherwise from the
+    # environment variables an AAP credential injects into the job.
+    _aap_host: >-
+      {{ aap_hostname | default(lookup('env', 'AAP_HOSTNAME')
+         or lookup('env', 'GATEWAY_HOSTNAME') or lookup('env', 'CONTROLLER_HOST'), true) }}
+    _aap_user: >-
+      {{ aap_username | default(lookup('env', 'AAP_USERNAME')
+         or lookup('env', 'GATEWAY_USERNAME') or lookup('env', 'CONTROLLER_USERNAME'), true) }}
+    _aap_pass: >-
+      {{ aap_password | default(lookup('env', 'AAP_PASSWORD')
+         or lookup('env', 'GATEWAY_PASSWORD') or lookup('env', 'CONTROLLER_PASSWORD'), true) }}
+    _aap_existing_token: >-
+      {{ aap_token | default(lookup('env', 'AAP_TOKEN') or lookup('env', 'GATEWAY_API_TOKEN')
+         or lookup('env', 'CONTROLLER_OAUTH_TOKEN'), true) }}
 
   tasks:
     - name: Load resource variables
@@ -19,9 +35,49 @@
         file: "{{ item }}"
       loop: "{{ controller_configs }}"
 
-    - name: Apply Controller Resources
-      ansible.builtin.include_role:
-        name: infra.aap_configuration.dispatch
+    - name: Configure AAP resources
+      block:
+        # On AAP 2.5+ the controller no longer issues tokens at
+        # /api/controller/v2/tokens/, which ansible.controller requests when it is
+        # given a username and password ("Failed to get token: HTTP Error 404").
+        # Get a short-lived token from the platform gateway instead, and use it
+        # for every module call below.
+        - name: Create a temporary AAP gateway token from username and password
+          ansible.platform.token:
+            description: "APD Security installer (temporary)"
+            scope: write
+            state: present
+            aap_hostname: "{{ (_aap_host | trim) or omit }}"
+            aap_username: "{{ (_aap_user | trim) or omit }}"
+            aap_password: "{{ (_aap_pass | trim) or omit }}"
+            aap_validate_certs: "{{ aap_validate_certs | default(omit) }}"
+          register: _apd_temp_token_result
+          no_log: true
+          when:
+            - _aap_existing_token | trim | length == 0
+            - _aap_user | trim | length > 0
+            - _aap_pass | trim | length > 0
 
+        - name: Use the temporary token for AAP configuration
+          ansible.builtin.set_fact:
+            aap_token: "{{ _apd_temp_token_result.ansible_facts.aap_token }}"
+            _apd_temp_token: "{{ _apd_temp_token_result.ansible_facts.aap_token }}"
+          no_log: true
+          when: _apd_temp_token_result is not skipped
+
+        - name: Apply Controller Resources
+          ansible.builtin.include_role:
+            name: infra.aap_configuration.dispatch
+
+      always:
+        - name: Delete the temporary AAP gateway token
+          ansible.platform.token:
+            existing_token: "{{ _apd_temp_token }}"
+            state: absent
+            aap_hostname: "{{ (_aap_host | trim) or omit }}"
+            aap_token: "{{ _apd_temp_token }}"
+            aap_validate_certs: "{{ aap_validate_certs | default(omit) }}"
+          no_log: true
+          when: _apd_temp_token is defined
 
 ...
